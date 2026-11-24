@@ -1,0 +1,52 @@
+Table users {
+  id integer [pk, increment]
+  username text [not null, unique]
+  password_hash text [not null]
+  created_at text [not null]
+  last_seen_at text
+}
+
+Table groups {
+  id integer [pk, increment]
+  name text [not null]
+  created_by integer [not null]
+  created_at text [not null]
+}
+
+Table group_members {
+  group_id integer [not null]
+  user_id integer [not null]
+  joined_at text [not null]
+
+  indexes {
+    (group_id, user_id) [pk]
+    user_id
+  }
+}
+
+Table messages {
+  id integer [pk, increment]
+  sender_id integer [not null]
+  receiver_id integer
+  group_id integer
+  content text [not null]
+  created_at text [not null]
+  edited_at text
+  expires_at text
+
+  indexes {
+    (sender_id, receiver_id, created_at)
+    (receiver_id, sender_id, created_at)
+    (group_id, created_at)
+    expires_at
+  }
+
+  Note: 'Exactly one destination must be specified.'
+}
+
+Ref: groups.created_by > users.id
+Ref: group_members.group_id > groups.id
+Ref: group_members.user_id > users.id
+Ref: messages.sender_id > users.id
+Ref: messages.receiver_id > users.id
+Ref: messages.group_id > groups.id
