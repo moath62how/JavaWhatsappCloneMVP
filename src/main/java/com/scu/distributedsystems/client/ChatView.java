@@ -7,9 +7,14 @@ import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.io.Serial;
+import java.time.DayOfWeek;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.TemporalAdjusters;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.LongFunction;
@@ -23,8 +28,10 @@ final class ChatView {
     static final Color PAPER = new Color(0xF3F5F8);
     static final Color LINE = new Color(0xDCE2EA);
     static final Color ERROR = new Color(0x9D3237);
-    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("MMM d, HH:mm")
-            .withZone(ZoneId.systemDefault());
+    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm");
+    private static final DateTimeFormatter WEEKDAY = DateTimeFormatter.ofPattern("EEEE");
+    private static final DateTimeFormatter MONTH_DAY = DateTimeFormatter.ofPattern("MMMM d");
+    private static final DateTimeFormatter FULL_DATE = DateTimeFormatter.ofPattern("MMMM d, uuuu");
 
     private final CardLayout pages = new CardLayout();
     final JPanel root = new JPanel(pages);
@@ -62,9 +69,10 @@ final class ChatView {
     private final JLabel empty = label("Choose a conversation to get started", 14, false);
     private final Transcript transcript = new Transcript();
     private final JScrollPane messageScroll = scroll(transcript);
+    private final List<Component> messageRows = new ArrayList<>();
     private List<Message> messages = List.of();
     private long currentUser;
-    private LongFunction<String> nameFor = id -> "";
+    private LongFunction<String> nameFor = _ -> "";
     private int renderVersion;
 
     static void installLookAndFeel() {
@@ -134,7 +142,7 @@ final class ChatView {
         Long anchorId = null;
         int offset = 0;
         for (int i = 0; i < messages.size(); i++) {
-            Component row = transcript.getComponent(i);
+            Component row = messageRows.get(i);
             if (row.getY() + row.getHeight() > previousY) {
                 anchorId = messages.get(i).id();
                 offset = previousY - row.getY();
@@ -146,11 +154,22 @@ final class ChatView {
         int version = ++renderVersion;
         int width = messageScroll.getViewport().getWidth();
         transcript.removeAll();
+        messageRows.clear();
         Component anchor = null;
+        ZoneId zone = ZoneId.systemDefault();
+        LocalDate today = LocalDate.now(zone);
+        LocalDate previousDay = null;
         for (Message message : items) {
-            JPanel row = bubble(message, Math.max(140, width - 16));
+            var created = Instant.parse(message.createdAt()).atZone(zone);
+            LocalDate day = created.toLocalDate();
+            if (!day.equals(previousDay)) {
+                transcript.add(datePill(dayLabel(day, today)));
+                previousDay = day;
+            }
+            JPanel row = bubble(message, TIME.format(created), Math.max(140, width - 16));
             row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
             transcript.add(row);
+            messageRows.add(row);
             if (anchorId != null && message.id() == anchorId) {
                 anchor = row;
             }
@@ -176,6 +195,61 @@ final class ChatView {
     boolean isAtLatest() {
         var bar = messageScroll.getVerticalScrollBar();
         return bar.getMaximum() - bar.getValue() - bar.getVisibleAmount() < 48;
+    }
+
+    void onViewportChanged(Runnable callback) {
+        messageScroll.getViewport().addChangeListener(_ -> callback.run());
+    }
+
+    List<Long> visibleIncomingIds() {
+        Window window = SwingUtilities.getWindowAncestor(root);
+        if (window == null || !window.isFocused() || !messageScroll.isShowing()) {
+            return List.of();
+        }
+        Rectangle visible = messageScroll.getViewport().getViewRect();
+        var ids = new ArrayList<Long>();
+        for (int i = 0; i < messages.size(); i++) {
+            Message message = messages.get(i);
+            Rectangle row = messageRows.get(i).getBounds();
+            if (message.senderId() != currentUser && row.height > 0
+                    && visible.intersection(row).height >= Math.min(row.height, 32)) {
+                ids.add(message.id());
+            }
+        }
+        return ids;
+    }
+
+    static String dayLabel(LocalDate day, LocalDate today) {
+        if (day.equals(today)) {
+            return "Today · " + MONTH_DAY.format(day);
+        }
+        LocalDate weekStart = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        if (!day.isBefore(weekStart) && day.isBefore(weekStart.plusWeeks(1))) {
+            return WEEKDAY.format(day);
+        }
+        return (day.getYear() == today.getYear() ? MONTH_DAY : FULL_DATE).format(day);
+    }
+
+    private static JPanel datePill(String text) {
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 7));
+        row.setOpaque(false);
+        JLabel pill = new JLabel(text) {
+            @Override
+            protected void paintComponent(Graphics graphics) {
+                Graphics2D pen = (Graphics2D) graphics.create();
+                pen.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                pen.setColor(PAPER);
+                pen.fillRoundRect(0, 0, getWidth(), getHeight(), getHeight(), getHeight());
+                pen.dispose();
+                super.paintComponent(graphics);
+            }
+        };
+        pill.setFont(pill.getFont().deriveFont(Font.BOLD, 12f));
+        pill.setForeground(MUTED);
+        pill.setBorder(new EmptyBorder(4, 12, 4, 12));
+        row.add(pill);
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
+        return row;
     }
 
     void configureConversationRenderer(java.util.function.Predicate<Conversation> unread) {
@@ -282,8 +356,8 @@ final class ChatView {
         tabs.setOpaque(false);
         tabs.add(peopleTab);
         tabs.add(groupsTab);
-        peopleTab.addActionListener(event -> showGroupList(false));
-        groupsTab.addActionListener(event -> showGroupList(true));
+        peopleTab.addActionListener(_ -> showGroupList(false));
+        groupsTab.addActionListener(_ -> showGroupList(true));
         directory.add(peoplePage, "people");
         directory.add(groupPage, "groups");
         showGroupList(false);
@@ -342,7 +416,7 @@ final class ChatView {
         return chat;
     }
 
-    private JPanel bubble(Message message, int width) {
+    private JPanel bubble(Message message, String time, int width) {
         boolean mine = message.senderId() == currentUser;
         var row = new JPanel(new BorderLayout());
         row.setBackground(WHITE);
@@ -350,8 +424,9 @@ final class ChatView {
 
         var stack = new JPanel(new BorderLayout(0, 3));
         stack.setOpaque(false);
-        String timestamp = TIME.format(Instant.parse(message.createdAt()));
-        JLabel details = label((mine ? "You" : nameFor.apply(message.senderId())) + " · " + timestamp, 11, true);
+        String detailsText = !mine && message.groupId() != null
+                ? nameFor.apply(message.senderId()) + " · " + time : time;
+        JLabel details = label(detailsText, 11, false);
         details.setHorizontalAlignment(mine ? SwingConstants.RIGHT : SwingConstants.LEFT);
         stack.add(details, BorderLayout.NORTH);
 
@@ -377,7 +452,8 @@ final class ChatView {
         text.setEditable(false);
         int longestLine = message.content().lines().mapToInt(text.getFontMetrics(text.getFont())::stringWidth)
                 .max().orElse(0);
-        int wrap = Math.max(44, Math.min((int) (width * 0.70) - 20, longestLine + 4));
+        int maxWrap = Math.max(44, (int) (width * 0.70) - 20);
+        int wrap = Math.clamp(longestLine + 4, 44, maxWrap);
         text.setSize(wrap, Short.MAX_VALUE);
         text.setPreferredSize(new Dimension(wrap, text.getPreferredSize().height));
         bubble.add(text);
@@ -385,6 +461,13 @@ final class ChatView {
         alignment.setOpaque(false);
         alignment.add(bubble, mine ? BorderLayout.EAST : BorderLayout.WEST);
         stack.add(alignment, BorderLayout.CENTER);
+        if (mine) {
+            String status = message.readCount() == 0 ? "Sent"
+                    : message.groupId() == null ? "Read" : "Read by " + message.readCount();
+            JLabel receipt = label(status, 11, false);
+            receipt.setHorizontalAlignment(SwingConstants.RIGHT);
+            stack.add(receipt, BorderLayout.SOUTH);
+        }
         Dimension preferred = stack.getPreferredSize();
         stack.setPreferredSize(new Dimension(Math.min(width - 12, preferred.width), preferred.height));
         row.add(stack, mine ? BorderLayout.EAST : BorderLayout.WEST);
@@ -453,6 +536,7 @@ final class ChatView {
     }
 
     private static final class Transcript extends JPanel implements Scrollable {
+        @Serial
         private static final long serialVersionUID = 1L;
 
         Transcript() {

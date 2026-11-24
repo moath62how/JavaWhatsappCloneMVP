@@ -22,7 +22,9 @@ import java.rmi.registry.Registry;
 import java.rmi.server.RMIServerSocketFactory;
 import java.rmi.server.UnicastRemoteObject;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Callable;
@@ -105,10 +107,7 @@ public final class ChatServer implements AutoCloseable {
             return session.user;
         });
         on("message:send", (client, data) -> {
-            Session session = sockets.get(client);
-            if (session == null) {
-                throw new IllegalArgumentException("Attach your login session first.");
-            }
+            Session session = requireSocketSession(client);
             Long receiverId = optionalId(data, "receiverId");
             Long groupId = optionalId(data, "groupId");
             var message = service.sendMessage(session.user.id(), receiverId, groupId, text(data, "content"));
@@ -123,6 +122,17 @@ public final class ChatServer implements AutoCloseable {
                 }
             }
             return message;
+        });
+        on("message:read", (client, data) -> {
+            Session session = requireSocketSession(client);
+            var receipts = service.markRead(session.user.id(), readIds(data));
+            for (var recorded : receipts) {
+                Session sender = users.get(recorded.senderId());
+                if (sender != null && sender.socket != null) {
+                    sender.socket.sendEvent("message:read-receipt", recorded.receipt());
+                }
+            }
+            return Map.of("updated", receipts.size());
         });
     }
 
@@ -205,6 +215,14 @@ public final class ChatServer implements AutoCloseable {
         return session;
     }
 
+    private Session requireSocketSession(SocketIOClient client) {
+        Session session = sockets.get(client);
+        if (session == null) {
+            throw new IllegalArgumentException("Attach your login session first.");
+        }
+        return session;
+    }
+
     private void detach(SocketIOClient client) {
         Session session = sockets.remove(client);
         if (session != null) {
@@ -237,6 +255,20 @@ public final class ChatServer implements AutoCloseable {
             return ((Number) value).longValue();
         }
         throw new IllegalArgumentException(key + " must be a positive integer.");
+    }
+
+    private static List<Long> readIds(Map<?, ?> data) {
+        if (!(data.get("messageIds") instanceof List<?> items) || items.size() > 100) {
+            throw new IllegalArgumentException("Provide up to 100 message IDs.");
+        }
+        var ids = new ArrayList<Long>(items.size());
+        for (Object item : items) {
+            if (!(item instanceof Integer || item instanceof Long) || ((Number) item).longValue() <= 0) {
+                throw new IllegalArgumentException("Message IDs must be positive integers.");
+            }
+            ids.add(((Number) item).longValue());
+        }
+        return ids;
     }
 
     @Override

@@ -44,9 +44,21 @@ Table messages {
   Note: 'Exactly one destination must be specified.'
 }
 
+Table message_reads {
+  message_id integer [not null]
+  user_id integer [not null]
+  read_at text [not null]
+
+  indexes {
+    (message_id, user_id) [pk]
+  }
+}
+
 Ref: groups.created_by > users.id
 Ref: group_members.group_id > groups.id
 Ref: group_members.user_id > users.id
 Ref: messages.sender_id > users.id
 Ref: messages.receiver_id > users.id
 Ref: messages.group_id > groups.id
+Ref: message_reads.message_id > messages.id [delete: cascade]
+Ref: message_reads.user_id > users.id

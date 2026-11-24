@@ -4,6 +4,7 @@ import com.scu.distributedsystems.client.ChatConnection.Session;
 import com.scu.distributedsystems.client.ChatView.Conversation;
 import com.scu.distributedsystems.protocol.ChatData.Group;
 import com.scu.distributedsystems.protocol.ChatData.Message;
+import com.scu.distributedsystems.protocol.ChatData.ReadReceipt;
 import com.scu.distributedsystems.protocol.ChatData.User;
 
 import javax.swing.DefaultListModel;
@@ -12,6 +13,7 @@ import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JOptionPane;
+import javax.swing.Timer;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.text.Document;
@@ -40,6 +42,10 @@ final class ChatController implements AutoCloseable {
     private final Set<String> pending = new HashSet<>();
     private final Map<String, String> drafts = new HashMap<>();
     private final TreeMap<Long, Message> transcript = new TreeMap<>();
+    private final Map<Long, Integer> receiptCounts = new HashMap<>();
+    private final Set<Long> reportedRead = new HashSet<>();
+    private final Set<Long> reportingRead = new HashSet<>();
+    private final Timer readTimer = new Timer(160, _ -> sendReadReceipts());
     private Session session;
     private Conversation selected;
     private boolean connected;
@@ -71,6 +77,8 @@ final class ChatController implements AutoCloseable {
         watch(view.draft.getDocument(), this::updateControls);
         listenForSelection(view.peopleList);
         listenForSelection(view.groupList);
+        readTimer.setRepeats(false);
+        view.onViewportChanged(this::checkReadReceipts);
         updateControls();
     }
 
@@ -126,6 +134,7 @@ final class ChatController implements AutoCloseable {
                     if (selected != null) {
                         loadHistory(false);
                     }
+                    checkReadReceipts();
                 }
             }
 
@@ -137,6 +146,16 @@ final class ChatController implements AutoCloseable {
             @Override
             public void membershipChanged() {
                 refreshDirectory();
+            }
+
+            @Override
+            public void receipt(ReadReceipt receipt) {
+                receiptCounts.merge(receipt.messageId(), receipt.readCount(), Math::max);
+                Message message = transcript.get(receipt.messageId());
+                if (message != null && message.readCount() < receipt.readCount()) {
+                    transcript.put(message.id(), message.withReadCount(receipt.readCount()));
+                    showTranscript(view.isAtLatest());
+                }
             }
 
             @Override
@@ -169,6 +188,10 @@ final class ChatController implements AutoCloseable {
         unread.clear();
         pending.clear();
         drafts.clear();
+        receiptCounts.clear();
+        reportedRead.clear();
+        reportingRead.clear();
+        readTimer.stop();
         clearConversation();
         view.search.setText("");
         view.showGroupList(false);
@@ -318,7 +341,7 @@ final class ChatController implements AutoCloseable {
                         hasEarlier = page.size() == PAGE_SIZE;
                     }
                     boolean stickToEnd = !earlier && view.isAtLatest();
-                    page.forEach(message -> transcript.put(message.id(), message));
+                    page.forEach(this::mergeMessage);
                     showTranscript(stickToEnd);
                     updateControls();
                 }, error -> {
@@ -387,9 +410,48 @@ final class ChatController implements AutoCloseable {
     }
 
     private void addToTranscript(Message message, boolean stickToEnd) {
-        if (transcript.putIfAbsent(message.id(), message) == null) {
+        if (mergeMessage(message)) {
             showTranscript(stickToEnd);
         }
+    }
+
+    private boolean mergeMessage(Message message) {
+        Message existing = transcript.get(message.id());
+        int count = Math.max(message.readCount(), receiptCounts.getOrDefault(message.id(), 0));
+        if (existing != null && count <= existing.readCount()) {
+            return false;
+        }
+        transcript.put(message.id(), message.withReadCount(count));
+        return true;
+    }
+
+    void checkReadReceipts() {
+        if (!closed && connected && selected != null) {
+            readTimer.restart();
+        }
+    }
+
+    private void sendReadReceipts() {
+        Session owner = session;
+        if (owner == null || selected == null || !connected || closed) {
+            return;
+        }
+        List<Long> ids = view.visibleIncomingIds().stream()
+                .filter(id -> !reportedRead.contains(id) && !reportingRead.contains(id))
+                .limit(100).toList();
+        if (ids.isEmpty()) {
+            return;
+        }
+        reportingRead.addAll(ids);
+        connection.markRead(owner, ids).whenComplete((_, error) -> ChatConnection.onUi(() -> {
+            if (session == owner && !closed) {
+                reportingRead.removeAll(ids);
+                if (error == null) {
+                    reportedRead.addAll(ids);
+                    checkReadReceipts();
+                }
+            }
+        }));
     }
 
     private void showTranscript(boolean stickToEnd) {
@@ -398,6 +460,7 @@ final class ChatController implements AutoCloseable {
         long myId = session == null ? 0 : session.user().id();
         view.showTranscript(List.copyOf(transcript.values()), empty, myId,
                 id -> users.containsKey(id) ? users.get(id).username() : "User " + id, stickToEnd);
+        checkReadReceipts();
     }
 
     private void createGroup() {
@@ -542,6 +605,7 @@ final class ChatController implements AutoCloseable {
     @Override
     public void close() {
         closed = true;
+        readTimer.stop();
         connection.close();
     }
 

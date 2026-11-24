@@ -9,7 +9,7 @@ import java.awt.event.WindowEvent;
 public final class ClientMain {
     private ClientMain() {}
 
-    public static void main(String[] args) {
+    static void main(String[] args) {
         int socketPort = args.length > 0 ? Integer.parseInt(args[0]) : 3000;
         int rmiPort = args.length > 1 ? Integer.parseInt(args[1]) : 3001;
         if (socketPort < 1 || socketPort > 65535 || rmiPort < 1 || rmiPort > 65535) {
@@ -24,6 +24,12 @@ public final class ClientMain {
             frame.setSize(690, 530);
             frame.setLocationByPlatform(true);
             frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+            frame.addWindowFocusListener(new WindowAdapter() {
+                @Override
+                public void windowGainedFocus(WindowEvent event) {
+                    controller.checkReadReceipts();
+                }
+            });
             frame.addWindowListener(new WindowAdapter() {
                 @Override
                 public void windowClosed(WindowEvent event) {

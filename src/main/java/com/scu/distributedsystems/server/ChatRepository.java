@@ -2,6 +2,7 @@ package com.scu.distributedsystems.server;
 
 import com.scu.distributedsystems.protocol.ChatData.Group;
 import com.scu.distributedsystems.protocol.ChatData.Message;
+import com.scu.distributedsystems.protocol.ChatData.ReadReceipt;
 import com.scu.distributedsystems.protocol.ChatData.User;
 
 import java.io.IOException;
@@ -14,10 +15,14 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 final class ChatRepository implements AutoCloseable {
     record Account(User user, String passwordHash) {}
+    record RecordedReceipt(long senderId, ReadReceipt receipt) {}
+
+    private static final String READ_COUNT = "(SELECT COUNT(*) FROM message_reads WHERE message_id = m.id)";
 
     private final Connection connection;
 
@@ -120,19 +125,48 @@ final class ChatRepository implements AutoCloseable {
                 INSERT INTO messages (sender_id, receiver_id, group_id, content, created_at)
                 VALUES (?, ?, ?, ?, ?)
                 """, senderId, receiverId, groupId, content, now);
-        return new Message(id, senderId, receiverId, groupId, content, now);
+        return new Message(id, senderId, receiverId, groupId, content, now, 0);
+    }
+
+    List<RecordedReceipt> markRead(long userId, List<Long> messageIds, String now) throws SQLException {
+        if (messageIds.isEmpty()) {
+            return List.of();
+        }
+        var params = new ArrayList<Object>(List.of(userId, now, userId, userId, userId));
+        params.addAll(messageIds);
+        List<Long> inserted = query("""
+                INSERT INTO message_reads (message_id, user_id, read_at)
+                SELECT m.id, ?, ? FROM messages m
+                WHERE m.sender_id <> ? AND (m.receiver_id = ? OR EXISTS (
+                    SELECT 1 FROM group_members WHERE group_id = m.group_id AND user_id = ?
+                )) AND m.id IN (%s)
+                ON CONFLICT (message_id, user_id) DO NOTHING
+                RETURNING message_id
+                """.formatted(placeholders(messageIds.size())), row -> row.getLong("message_id"), params.toArray());
+        if (inserted.isEmpty()) {
+            return List.of();
+        }
+        return query("SELECT m.id, m.sender_id, " + READ_COUNT + " AS read_count FROM messages m WHERE m.id IN ("
+                        + placeholders(inserted.size()) + ")",
+                row -> new RecordedReceipt(row.getLong("sender_id"),
+                        new ReadReceipt(row.getLong("id"), row.getInt("read_count"))), inserted.toArray());
+    }
+
+    private static String placeholders(int count) {
+        return String.join(",", Collections.nCopies(count, "?"));
     }
 
     List<Message> privateHistory(long userId, long peerId, long beforeId) throws SQLException {
-        return query("""
-                SELECT * FROM messages WHERE id < ? AND
+        return query("SELECT m.*, " + READ_COUNT + " AS read_count FROM messages m " + """
+                WHERE id < ? AND
                     ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
                 ORDER BY id DESC LIMIT 100
                 """, ChatRepository::readMessage, beforeId, userId, peerId, peerId, userId).reversed();
     }
 
     List<Message> groupHistory(long groupId, long beforeId) throws SQLException {
-        return query("SELECT * FROM messages WHERE group_id = ? AND id < ? ORDER BY id DESC LIMIT 100",
+        return query("SELECT m.*, " + READ_COUNT + " AS read_count FROM messages m "
+                        + "WHERE group_id = ? AND id < ? ORDER BY id DESC LIMIT 100",
                 ChatRepository::readMessage, groupId, beforeId).reversed();
     }
 
@@ -181,7 +215,7 @@ final class ChatRepository implements AutoCloseable {
     private static Message readMessage(ResultSet row) throws SQLException {
         return new Message(row.getLong("id"), row.getLong("sender_id"),
                 nullableId(row, "receiver_id"), nullableId(row, "group_id"),
-                row.getString("content"), row.getString("created_at"));
+                row.getString("content"), row.getString("created_at"), row.getInt("read_count"));
     }
 
     private static Long nullableId(ResultSet row, String column) throws SQLException {

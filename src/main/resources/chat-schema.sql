@@ -32,6 +32,13 @@ CREATE TABLE IF NOT EXISTS messages (
     CHECK ((receiver_id IS NULL) <> (group_id IS NULL))
 );
 
+CREATE TABLE IF NOT EXISTS message_reads (
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    read_at TEXT NOT NULL,
+    PRIMARY KEY (message_id, user_id)
+);
+
 CREATE INDEX IF NOT EXISTS group_members_user_idx ON group_members(user_id);
 CREATE INDEX IF NOT EXISTS messages_sender_receiver_idx ON messages(sender_id, receiver_id, created_at);
 CREATE INDEX IF NOT EXISTS messages_receiver_sender_idx ON messages(receiver_id, sender_id, created_at);

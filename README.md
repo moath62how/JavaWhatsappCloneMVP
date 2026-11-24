@@ -39,9 +39,11 @@ Enter a username and password, then choose **Create account** or **Sign in**. In
 | `session:attach` | Client → server | `{token}` attaches an authenticated user and joins their group rooms. |
 | `message:send` | Client → server | `{receiverId, content}` or `{groupId, content}` saves one message. The sender receives the saved message in the acknowledgment. |
 | `message:new` | Server → recipients | Carries the saved message. Private delivery goes to the recipient socket. Group delivery goes to the other connected sockets in the group room. |
+| `message:read` | Client → server | `{messageIds}` records up to 100 visible incoming messages in the focused conversation. |
+| `message:read-receipt` | Server → sender | `{messageId, readCount}` updates the sender after a recipient reads the message. |
 | `group:member-added` | Server → group | `{group, userId}` tells members to update their group view after an RMI membership change. |
 
-Socket.IO requests acknowledge with `{ok, data, error}`. Messages carry `id`, `senderId`, `receiverId`, `groupId`, `content`, and `createdAt`. The server saves messages before sending live events. RMI history returns up to 100 messages in chronological order. Pass the oldest returned ID as `beforeId` to fetch an earlier page, or pass `null` for the latest page.
+Socket.IO requests acknowledge with `{ok, data, error}`. Messages carry `id`, `senderId`, `receiverId`, `groupId`, `content`, `createdAt`, and `readCount`. The server saves messages and read receipts in SQLite. The sender sees **Read** in a private chat or **Read by N** in a group. RMI history returns up to 100 messages in chronological order. Pass the oldest returned ID as `beforeId` to fetch an earlier page, or pass `null` for the latest page.
 
 ## Explain the demo
 

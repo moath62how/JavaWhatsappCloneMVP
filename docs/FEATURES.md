@@ -26,6 +26,7 @@ Make Socket.IO the focus of implementation and the demo. Use named Socket.IO eve
 - Light and dark modes.
 - Message editing.
 - Message search.
+- Read receipts for private and group messages.
 
 ## Architecture
 

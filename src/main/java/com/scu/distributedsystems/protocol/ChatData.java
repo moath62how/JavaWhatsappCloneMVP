@@ -10,7 +10,13 @@ public final class ChatData {
     public record Group(long id, String name, long createdBy, String createdAt) implements Serializable {}
 
     public record Message(long id, long senderId, Long receiverId, Long groupId,
-                          String content, String createdAt) implements Serializable {}
+                          String content, String createdAt, int readCount) implements Serializable {
+        public Message withReadCount(int count) {
+            return new Message(id, senderId, receiverId, groupId, content, createdAt, count);
+        }
+    }
+
+    public record ReadReceipt(long messageId, int readCount) {}
 
     public record Login(User user, String token) implements Serializable {}
 

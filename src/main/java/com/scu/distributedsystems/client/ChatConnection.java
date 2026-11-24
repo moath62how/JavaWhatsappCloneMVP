@@ -2,6 +2,7 @@ package com.scu.distributedsystems.client;
 
 import com.scu.distributedsystems.protocol.ChatData.Login;
 import com.scu.distributedsystems.protocol.ChatData.Message;
+import com.scu.distributedsystems.protocol.ChatData.ReadReceipt;
 import com.scu.distributedsystems.protocol.ChatData.User;
 import com.scu.distributedsystems.protocol.ChatRequests;
 import io.socket.client.AckWithTimeout;
@@ -14,6 +15,7 @@ import javax.swing.SwingUtilities;
 import java.net.URI;
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -82,6 +84,16 @@ final class ChatConnection implements AutoCloseable {
                 observer.membershipChanged();
             }
         }));
+        next.socket.on("message:read-receipt", args -> onUi(() -> {
+            if (session == next) {
+                try {
+                    JSONObject data = object(args);
+                    observer.receipt(new ReadReceipt(data.getLong("messageId"), data.getInt("readCount")));
+                } catch (JSONException | IllegalStateException error) {
+                    observer.error("The server returned an invalid read receipt.");
+                }
+            }
+        }));
         next.status(false, "Connecting…");
         next.socket.connect();
     }
@@ -116,6 +128,13 @@ final class ChatConnection implements AutoCloseable {
         return emit(owner.socket, "message:send",
                 Map.of(group ? "groupId" : "receiverId", recipientId, "content", content))
                 .thenApply(ChatConnection::readMessage);
+    }
+
+    CompletableFuture<JSONObject> markRead(Session owner, List<Long> ids) {
+        if (session != owner || !owner.ready || !owner.socket.connected()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Socket is disconnected."));
+        }
+        return emit(owner.socket, "message:read", Map.of("messageIds", ids));
     }
 
     CompletableFuture<Void> signOut(Session owner) {
@@ -174,7 +193,7 @@ final class ChatConnection implements AutoCloseable {
             return new Message(data.getLong("id"), data.getLong("senderId"),
                     data.isNull("receiverId") ? null : data.getLong("receiverId"),
                     data.isNull("groupId") ? null : data.getLong("groupId"),
-                    data.getString("content"), data.getString("createdAt"));
+                    data.getString("content"), data.getString("createdAt"), data.optInt("readCount", 0));
         } catch (JSONException error) {
             throw new IllegalStateException("The server returned an invalid message.", error);
         }
@@ -251,6 +270,8 @@ final class ChatConnection implements AutoCloseable {
         void message(Message message);
 
         void membershipChanged();
+
+        void receipt(ReadReceipt receipt);
 
         void error(String message);
     }

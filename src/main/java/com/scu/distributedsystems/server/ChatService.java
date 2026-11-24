@@ -100,6 +100,10 @@ final class ChatService {
                 checkedText(content, 2000, "Message"), now());
     }
 
+    List<ChatRepository.RecordedReceipt> markRead(long userId, List<Long> messageIds) throws SQLException {
+        return repository.markRead(userId, messageIds, now());
+    }
+
     List<Message> history(long userId, Long peerId, Long groupId, long beforeId) throws SQLException {
         checkDestination(peerId, groupId);
         if (beforeId <= 0) {
