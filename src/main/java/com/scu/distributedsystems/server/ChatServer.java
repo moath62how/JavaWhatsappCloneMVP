@@ -64,7 +64,10 @@ public final class ChatServer implements AutoCloseable {
         registerSocketEvents();
     }
 
-    public void start() throws RemoteException {
+    public synchronized void start() throws RemoteException {
+        if (closed || socketStartAttempted) {
+            throw new IllegalStateException("This server instance can only start once.");
+        }
         try {
             socketStartAttempted = true;
             socketServer.start();

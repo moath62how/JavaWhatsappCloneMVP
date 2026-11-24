@@ -4,11 +4,13 @@ The Java 26 server runs Socket.IO, Java RMI, and SQLite in one process. The Swin
 
 ## Run the server
 
-Open this folder as a Maven project in IntelliJ IDEA and run `com.scu.distributedsystems.Main` with JDK 26. From a Bash terminal in this folder, you can also run:
+Open this folder as a Maven project in IntelliJ IDEA, reload the Maven dependencies, and select the shared **Chat Server** run configuration with JDK 26. If you use an existing `Main` configuration, set its VM options to `-Dio.netty.noUnsafe=true --enable-native-access=ALL-UNNAMED`. Netty uses its standard Java memory path and SQLite can load its native driver.
+
+From a Bash terminal in this folder, run:
 
 ```bash
 mvn compile dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
-java --enable-native-access=ALL-UNNAMED \
+java -Dio.netty.noUnsafe=true --enable-native-access=ALL-UNNAMED \
   -cp "target/classes:$(cat target/classpath.txt)" com.scu.distributedsystems.Main
 ```
 

@@ -443,7 +443,6 @@ final class ChatView {
 
     private static JButton button(String title, boolean primary) {
         var button = new JButton(title);
-        button.putClientProperty("JButton.buttonType", "borderless");
         button.putClientProperty("JComponent.minimumWidth", 0);
         button.putClientProperty("JComponent.minimumHeight", 30);
         button.putClientProperty("FlatLaf.styleClass", primary ? "localPrimary" : "localSecondary");
